@@ -37,7 +37,7 @@ class NormalDistributed(SampleLayer):
 		return samples,qz
 
 	def getLoss(self,qz):
-		kl = (-0.5*(qz.logvar-torch.exp(qz.logvar)-torch.pow(qz.mu,2)+1).sum(1))
+		kl = (-0.5*(qz.logvar-torch.exp(qz.logvar)-torch.pow(qz.mu,2)+1).sum(1)).mean()
 		return kl
 
 	def inputShape(self):

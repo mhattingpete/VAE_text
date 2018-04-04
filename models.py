@@ -7,15 +7,6 @@ import torch.nn.functional as F
 from layers import RNNEncoder,RNNDecoder,CNNEncoder,CNNDecoder,HybridDecoder
 from sampleLayers import NormalDistributed
 
-def correctPreds(pred,labels):
-	num_steps = labels.size()[0]
-	labels = labels.type(torch.LongTensor)
-	labels = labels.view(-1)
-	pred = pred.view(-1)
-	assert pred.size()[0] == labels.size()[0]
-	correct = (pred.data == labels.data).sum()
-	return correct
-
 def weight_init(m):
 	if type(m) == nn.Linear:
 		nn.init.xavier_normal(m.weight.data)
@@ -26,7 +17,7 @@ def weight_init(m):
 		pass
 
 class RVAE(nn.Module):
-	def __init__(self,num_classes,hidden_size,latent_size,criterion,dropout_prob=0.2,teacher_forcing_ratio=0.5):
+	def __init__(self,hidden_size,latent_size,criterion,dropout_prob=0.2,teacher_forcing_ratio=0.5):
 		super().__init__()
 		"""
 		Layer definitions
@@ -40,8 +31,7 @@ class RVAE(nn.Module):
 		# convert from latent space to hidden space
 		self.hz2x = nn.Linear(self.sampler.outputShape()[-1],hidden_size)
 		# decode from hidden space to input space
-		vocab_size = num_classes + 1
-		self.decoder = RNNDecoder(input_size=1,hidden_size=hidden_size,output_size=vocab_size,teacher_forcing_ratio=teacher_forcing_ratio,dropout_prob=dropout_prob)
+		self.decoder = RNNDecoder(input_size=1,hidden_size=hidden_size,output_size=1,dropout_prob=dropout_prob)
 		"""
 		Function definitions
 		"""
@@ -76,26 +66,22 @@ class RVAE(nn.Module):
 		dec = self.z2x(z,num_steps,x=x)
 		return dec,qz,z
 
-	def loss(self,recon_x,x):
-		x = x.type(torch.LongTensor).squeeze(2)
-		loss = 0
-		for di in range(x.size()[0]):
-			loss += self.criterion(recon_x[di],x[di])
-		return loss/x.size()[0]
-
 	def getLoss(self,x,beta=1.0,alpha=None):
+		num_steps = x.size()[0]
 		recon_x,qz,z = self.forward(x)
-		kl = self.sampler.getLoss(qz).mean()
-		r_loss = self.loss(recon_x,x)
+		x = x.contiguous().view(-1)
+		recon_x = recon_x.view(-1)
+		kl = self.sampler.getLoss(qz)
+		r_loss = self.criterion(recon_x,x)
 		loss = r_loss+beta*kl
-		_,recon_x_pred = recon_x.max(dim=2)
-		correct = correctPreds(recon_x_pred,x)
-		diagnostics = {'kl':kl.data,'loss':loss.data,'r_loss':r_loss.data,'aux_loss':torch.FloatTensor([0]),'correct':correct}
-		data = {'recon_x':recon_x_pred,'x':x.squeeze(2),'qz':qz,'z':z}
+		x = x.view(num_steps,-1)
+		recon_x = recon_x.view(num_steps,-1)
+		diagnostics = {'kl':kl.data,'loss':loss.data,'r_loss':r_loss.data,'aux_loss':torch.FloatTensor([0])}
+		data = {'recon_x':recon_x,'x':x,'qz':qz,'z':z}
 		return loss,diagnostics,data
 
 class CVAE(nn.Module):
-	def __init__(self,num_classes,hidden_size,latent_size,criterion,dropout_prob=0.2):
+	def __init__(self,hidden_size,latent_size,criterion,dropout_prob=0.2):
 		super().__init__()
 		"""
 		Layer definitions
@@ -109,8 +95,7 @@ class CVAE(nn.Module):
 		# convert from latent space to hidden space
 		self.hz2x = nn.Linear(self.sampler.outputShape()[-1],hidden_size)
 		# decode from hidden space to input space
-		vocab_size = num_classes
-		self.decoder = CNNDecoder(input_size=1,hidden_size=hidden_size,output_size=vocab_size,dropout_prob=dropout_prob)
+		self.decoder = CNNDecoder(input_size=1,hidden_size=hidden_size,output_size=1,dropout_prob=dropout_prob)
 		"""
 		Function definitions
 		"""
@@ -123,7 +108,7 @@ class CVAE(nn.Module):
 		"""
 		Initialise weights
 		"""
-		#self.apply(weight_init)
+		self.apply(weight_init)
 
 	# decoding latent space
 	def z2x(self,z):
@@ -145,26 +130,22 @@ class CVAE(nn.Module):
 		out = self.z2x(z)
 		return out,qz,z
 
-	def loss(self,recon_x,x):
-		x = x.type(torch.LongTensor).squeeze(2)
-		loss = 0
-		for di in range(x.size()[0]):
-			loss += self.criterion(recon_x[di],x[di])
-		return loss/x.size()[0]
-
 	def getLoss(self,x,beta=1.0,alpha=None):
+		num_steps = x.size()[0]
 		recon_x,qz,z = self.forward(x)
-		kl = self.sampler.getLoss(qz).mean()
-		r_loss = self.loss(recon_x,x)
+		x = x.contiguous().view(-1)
+		recon_x = recon_x.view(-1)
+		kl = self.sampler.getLoss(qz)
+		r_loss = self.criterion(recon_x,x)
 		loss = r_loss+beta*kl
-		_,recon_x_pred = recon_x.max(dim=2)
-		correct = correctPreds(recon_x_pred,x)
-		diagnostics = {'kl':kl.data,'loss':loss.data,'r_loss':r_loss.data,'aux_loss':torch.FloatTensor([0]),'correct':correct}
-		data = {'recon_x':recon_x_pred,'x':x.squeeze(2),'qz':qz,'z':z}
+		x = x.view(num_steps,-1)
+		recon_x = recon_x.view(num_steps,-1)
+		diagnostics = {'kl':kl.data,'loss':loss.data,'r_loss':r_loss.data,'aux_loss':torch.FloatTensor([0])}
+		data = {'recon_x':recon_x,'x':x,'qz':qz,'z':z}
 		return loss,diagnostics,data
 
 class HybridVAE(nn.Module):
-	def __init__(self,num_classes,hidden_size,latent_size,criterion,dropout_prob=0.2,teacher_forcing_ratio=0.5):
+	def __init__(self,hidden_size,latent_size,criterion,dropout_prob=0.2,teacher_forcing_ratio=0.5):
 		super().__init__()
 		"""
 		Layer definitions
@@ -178,8 +159,7 @@ class HybridVAE(nn.Module):
 		# convert from latent space to hidden space
 		self.hz2x = nn.Linear(self.sampler.outputShape()[-1],hidden_size)
 		# decode from hidden space to input space
-		vocab_size = num_classes + 2
-		self.decoder = HybridDecoder(input_size=1,hidden_size=hidden_size,output_size=vocab_size,teacher_forcing_ratio=teacher_forcing_ratio,dropout_prob=dropout_prob)
+		self.decoder = HybridDecoder(input_size=1,hidden_size=hidden_size,output_size=1,teacher_forcing_ratio=teacher_forcing_ratio,dropout_prob=dropout_prob)
 		"""
 		Function definitions
 		"""
@@ -192,7 +172,7 @@ class HybridVAE(nn.Module):
 		"""
 		Initialise weights
 		"""
-		#self.apply(weight_init)
+		self.apply(weight_init)
 
 	# decoding latent space
 	def z2x(self,z,num_steps,x=None):
@@ -214,20 +194,17 @@ class HybridVAE(nn.Module):
 		out,dec = self.z2x(z,num_steps,x=x)
 		return out,dec,qz,z
 
-	def loss(self,recon_x,x):
-		x = x.type(torch.LongTensor).squeeze(2)
-		loss = 0
-		for di in range(x.size()[0]):
-			loss += self.criterion(recon_x[di],x[di])
-		return loss/x.size()[0]
-
 	def getLoss(self,x,beta=1.0,alpha=0.2):
-		recon_x,recon_x_pre,qz,z = self.forward(x)
-		kl = self.sampler.getLoss(qz).mean()
-		r_loss = self.loss(recon_x,x)
-		aux_loss = self.loss(recon_x_pre,x)
+		num_steps = x.size()[0]
+		recon_x,aux_x,qz,z = self.forward(x)
+		x = x.contiguous().view(-1)
+		recon_x = recon_x.view(-1)
+		kl = self.sampler.getLoss(qz)
+		r_loss = self.criterion(recon_x,x)
+		aux_loss = self.criterion(aux_x,x)
 		loss = r_loss+beta*kl+alpha*aux_loss
+		x = x.view(num_steps,-1)
+		recon_x = recon_x.view(num_steps,-1)
 		diagnostics = {'kl':kl.data,'loss':loss.data,'r_loss':r_loss.data,'aux_loss':aux_loss.data}
-		_,recon_x_pred = recon_x.max(dim=2)
-		data = {'recon_x':recon_x_pred,'x':x.squeeze(2),'qz':qz,'z':z}
+		data = {'recon_x':recon_x,'x':x,'qz':qz,'z':z}
 		return loss,diagnostics,data
