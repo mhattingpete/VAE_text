@@ -16,6 +16,7 @@ num_steps = 15
 train_size = 1000
 valid_size = 1000
 num_classes = 0
+# use just one
 train_loader = DataLoader(Sinusoids(num_steps,virtual_size=train_size,quantization=num_classes),batch_size=batch_size,shuffle=True)
 valid_loader = DataLoader(Sinusoids(num_steps,virtual_size=valid_size,quantization=num_classes),batch_size=batch_size,shuffle=True)
 

@@ -22,3 +22,7 @@ class WordDropout:
 	def __call__(self,input):
 		mask = Variable(torch.from_numpy(np.random.binomial(1,0.5,size=input.data.numpy().shape))).type(torch.FloatTensor)
 		return input*mask + self.dummy*(1-mask)
+
+def kl_loss(qz):
+	kl = (-0.5*(qz.logvar-torch.exp(qz.logvar)-torch.pow(qz.mu,2)+1).sum(1)).mean()
+	return kl

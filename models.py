@@ -177,19 +177,13 @@ class HybridVAE(nn.Module):
 	# decoding latent space
 	def z2x(self,z,num_steps,x=None):
 		h = self.hz2x(z)
-		h = self.relu(h)
-		h = self.dropout(h)
 		out,dec = self.decoder(h,num_steps,x=x)
 		return out,dec
 
 	def forward(self,x):
 		num_steps = x.size()[0]
 		enc = self.encoder(x)
-		enc = self.relu(enc)
-		enc = self.dropout(enc)
 		enc = self.hx2z(enc)
-		enc = self.relu(enc)
-		enc = self.dropout(enc)
 		z,qz = self.sampler(enc)
 		out,dec = self.z2x(z,num_steps,x=x)
 		return out,dec,qz,z
@@ -208,3 +202,157 @@ class HybridVAE(nn.Module):
 		diagnostics = {'kl':kl.data,'loss':loss.data,'r_loss':r_loss.data,'aux_loss':aux_loss.data}
 		data = {'recon_x':recon_x,'x':x,'qz':qz,'z':z}
 		return loss,diagnostics,data
+
+
+###########################
+####   SEQ2SEQ MODELS  ####
+###########################
+
+class RNNSeq2Seq(nn.Module):
+	def __init__(self,rnn_size):
+		super().__init__()
+		"""
+		Layer definitions
+		"""
+		# encode from input space to hidden space
+		self.encoder = RNNEncoder(input_size=1,rnn_size=rnn_size)
+		# decode from hidden space to input space
+		self.decoder = RNNDecoder(input_size=1,rnn_size=rnn_size,output_size=1)
+
+	def forward(self,x):
+		num_steps = x.size()[0]
+		enc = self.encoder(x)
+		dec = self.decoder(enc,num_steps)
+		return dec
+
+class CNNSeq2Seq(nn.Module):
+	def __init__(self,conv_size):
+		super().__init__()
+		"""
+		Layer definitions
+		"""
+		# encode from input space to hidden space
+		self.encoder = CNNEncoder(input_size=1,conv_size=conv_size)
+		# decode from hidden space to input space
+		self.decoder = CNNDecoder(input_size=1,conv_size=conv_size,output_size=1)
+
+	def forward(self,x):
+		enc = self.encoder(x)
+		dec = self.decoder(enc)
+		return dec
+
+class HybridSeq2Seq(nn.Module):
+	def __init__(self,conv_size,rnn_size):
+		super().__init__()
+		"""
+		Layer definitions
+		"""
+		# encode from input space to hidden space
+		self.encoder = CNNEncoder(input_size=1,conv_size=conv_size)
+		# decode from hidden space to input space
+		self.decoder = HybridDecoder(input_size=1,conv_size=conv_size,rnn_size=rnn_size,output_size=1)
+
+	def forward(self,x):
+		num_steps = x.size()[0]
+		enc = self.encoder(x)
+		dec = self.decoder(enc,num_steps)
+		return dec
+
+###########################
+####     VAE MODELS    ####
+###########################
+
+class RNNVAE(nn.Module):
+	def __init__(self,rnn_size,latent_size):
+		super().__init__()
+		"""
+		Layer definitions
+		"""
+		# sample layer with normal distribution
+		self.samplelayer = NormalDistributed(latent_size=latent_size)
+		# encode from input space to hidden space
+		self.encoder = RNNEncoder(input_size=1,rnn_size=rnn_size)
+		# encoded to latent layer
+		self.h2z = nn.Sequential(
+			nn.Linear(rnn_size,self.samplelayer.inputShape()[-1]),
+			nn.ELU()
+			)
+		# latent to decoded layer
+		self.z2h = nn.Sequential(
+			nn.Linear(self.samplelayer.outputShape()[-1],rnn_size),
+			nn.ELU()
+			)
+		# decode from hidden space to input space
+		self.decoder = RNNDecoder(input_size=1,rnn_size=rnn_size,output_size=1)
+
+	def forward(self,x):
+		num_steps = x.size()[0]
+		enc = self.encoder(x)
+		enc = self.h2z(enc)
+		z,qz = self.samplelayer(enc)
+		dec = self.z2h(z)
+		dec = self.decoder(dec,num_steps)
+		return dec,qz
+
+class CNNVAE(nn.Module):
+	def __init__(self,conv_size,latent_size):
+		super().__init__()
+		"""
+		Layer definitions
+		"""
+		# sample layer with normal distribution
+		self.samplelayer = NormalDistributed(latent_size=latent_size)
+		# encode from input space to hidden space
+		self.encoder = CNNEncoder(input_size=1,conv_size=conv_size)
+		# encoded to latent layer
+		self.h2z = nn.Sequential(
+			nn.Linear(conv_size,self.samplelayer.inputShape()[-1]),
+			nn.ELU()
+			)
+		# latent to decoded layer
+		self.z2h = nn.Sequential(
+			nn.Linear(self.samplelayer.outputShape()[-1],conv_size),
+			nn.ELU()
+			)
+		# decode from hidden space to input space
+		self.decoder = CNNDecoder(input_size=1,conv_size=conv_size,output_size=1)
+
+	def forward(self,x):
+		enc = self.encoder(x)
+		enc = self.h2z(enc)
+		z,qz = self.samplelayer(enc)
+		dec = self.z2h(z)
+		dec = self.decoder(dec)
+		return dec,qz
+
+class HybridVAE(nn.Module):
+	def __init__(self,conv_size,rnn_size,latent_size):
+		super().__init__()
+		"""
+		Layer definitions
+		"""
+		# sample layer with normal distribution
+		self.samplelayer = NormalDistributed(latent_size=latent_size)
+		# encode from input space to hidden space
+		self.encoder = CNNEncoder(input_size=1,conv_size=conv_size)
+		# encoded to latent layer
+		self.h2z = nn.Sequential(
+			nn.Linear(conv_size,self.samplelayer.inputShape()[-1]),
+			nn.ELU()
+			)
+		# latent to decoded layer
+		self.z2h = nn.Sequential(
+			nn.Linear(self.samplelayer.outputShape()[-1],conv_size),
+			nn.ELU()
+			)
+		# decode from hidden space to input space
+		self.decoder = HybridDecoder(input_size=1,conv_size=conv_size,rnn_size=rnn_size,output_size=1)
+
+	def forward(self,x):
+		num_steps = x.size()[0]
+		enc = self.encoder(x)
+		enc = self.h2z(enc)
+		z,qz = self.samplelayer(enc)
+		dec = self.z2h(z)
+		dec,aux_x = self.decoder(dec,num_steps)
+		return dec,qz,aux_x
