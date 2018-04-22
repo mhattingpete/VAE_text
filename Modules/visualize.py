@@ -1,7 +1,10 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-from ToyDatasets.timeSeries import Sinusoids
+import sys
+sys.path.append("../ToyDatasets")
+
+from timeSeries import Sinusoids
 
 def plotDataset(dataset,xu=None,yu=1,max_print=100):
 	fig = plt.figure()
@@ -59,9 +62,3 @@ def showPlot(points,points_valid,yu=200):
 	plt.plot(points,'ro')
 	plt.plot(points_valid,'b*')
 	plt.ylim([0,yu])
-
-if __name__ == '__main__':
-	num_steps = 10
-	dataset = Sinusoids(num_steps)
-	plotDataset(dataset,xu=num_steps,max_print=100)
-	plt.show()
