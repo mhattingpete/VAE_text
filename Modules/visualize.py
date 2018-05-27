@@ -1,11 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-import sys
-sys.path.append("../ToyDatasets")
-
-from timeSeries import Sinusoids
-
 def plotDataset(dataset,xu=None,yu=1,max_print=100):
 	fig = plt.figure()
 	i = 1
@@ -57,8 +52,18 @@ def plotSamples(x,xu=None,yu=1,max_print=100):
 		ax.set_ylim([0,yu])
 		ax.axis('off')
 
-def showPlot(points,points_valid,yu=200):
+def showPlot(points,points_valid,yl=-5):
 	plt.figure()
 	plt.plot(points,'ro')
 	plt.plot(points_valid,'b*')
-	plt.ylim([0,yu])
+	plt.ylim([yl,0])
+
+
+def printText(sampled_data,data_decoder,recon_x_text="Reconstruction"):
+	sampled_data["x"] = sampled_data["x"].data.numpy()
+	sampled_data["recon_x"] = sampled_data["recon_x"].data.numpy()
+	for i in range(sampled_data["x"].shape[1]):
+		print("\nTrue:\n",data_decoder.decode(sampled_data["x"][:,i]))
+		print("{}:\n".format(recon_x_text),data_decoder.decode(sampled_data["recon_x"][:,i]))
+		if i == 10:
+			break

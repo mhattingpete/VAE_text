@@ -2,9 +2,10 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 
-from layers import RNNEncoder,AdvancedRNNEncoder,RNNDecoder,AdvancedRNNDecoder,CNNEncoder,AdvancedCNNEncoder,CNNDecoder,AdvancedCNNDecoder,HybridDecoder,AdvancedHybridDecoder
+from layers import RNNEncoder,AdvancedRNNEncoder,RNNDecoder,AdvancedRNNDecoder,CNNEncoder,AdvancedCNNEncoder,CNNDecoder,AdvancedCNNDecoder
+from layers import HybridDecoder,AdvancedHybridDecoder,LadderEncoder,LadderDecoder,LadderCNNEncoder,LadderCNNDecoder
 from sampleLayers import NormalDistributed,AdvancedNormalDistributed
-from helpers import Normal
+from helpers import kl_div
 
 ###########################
 ####   SEQ2SEQ MODELS  ####
@@ -71,6 +72,7 @@ class RNNVAE(nn.Module):
 		Layer definitions
 		"""
 		self.aux_loss = False
+		self.kl_loss = False
 		# sample layer with normal distribution
 		self.samplelayer = NormalDistributed(latent_size=latent_size)
 		# encode from input space to hidden space
@@ -98,12 +100,6 @@ class RNNVAE(nn.Module):
 		return dec,qz
 
 	def sample(self,z,num_steps):
-		'''
-		h = Variable(torch.zeros(num_samples,self.samplelayer.inputShape()[-1]))
-		mu,logvar = h.chunk(2,1)
-		qz = Normal(mu,logvar)
-		z = qz.sample()
-		'''
 		dec = self.z2h(z)
 		dec = self.decoder(dec,num_steps)
 		return dec
@@ -115,6 +111,7 @@ class AdvancedRNNVAE(nn.Module):
 		Layer definitions
 		"""
 		self.aux_loss = False
+		self.kl_loss = False
 		# sample layer with normal distribution
 		self.samplelayer = AdvancedNormalDistributed(latent_size=latent_size) # sample is of size [seq_len, batch_size, latent_size]
 		# encode from input space to hidden space
@@ -157,6 +154,7 @@ class CNNVAE(nn.Module):
 		Layer definitions
 		"""
 		self.aux_loss = False
+		self.kl_loss = False
 		# sample layer with normal distribution
 		self.samplelayer = NormalDistributed(latent_size=latent_size)
 		# encode from input space to hidden space
@@ -200,6 +198,7 @@ class AdvancedCNNVAE(nn.Module):
 		Layer definitions
 		"""
 		self.aux_loss = False
+		self.kl_loss = False
 		# sample layer with normal distribution
 		self.samplelayer = AdvancedNormalDistributed(latent_size=latent_size)
 		# encode from input space to hidden space
@@ -237,6 +236,7 @@ class HybridVAE(nn.Module):
 		Layer definitions
 		"""
 		self.aux_loss = True
+		self.kl_loss = False
 		# sample layer with normal distribution
 		self.samplelayer = NormalDistributed(latent_size=latent_size)
 		# encode from input space to hidden space
@@ -281,6 +281,7 @@ class AdvancedHybridVAE(nn.Module):
 		Layer definitions
 		"""
 		self.aux_loss = True
+		self.kl_loss = False
 		# sample layer with normal distribution
 		self.samplelayer = AdvancedNormalDistributed(latent_size=latent_size)
 		# encode from input space to hidden space
@@ -310,4 +311,89 @@ class AdvancedHybridVAE(nn.Module):
 	def sample(self,z,num_steps):
 		dec = self.z2h(z)
 		dec,_ = self.decoder(dec,num_steps)
+		return dec
+
+class LadderVAE(nn.Module):
+	def __init__(self,input_size,hidden_sizes,latent_sizes,recon_hidden_size,output_size,use_softmax=False):
+		super().__init__()
+		self.aux_loss = False
+		self.kl_loss = True
+		layer_sizes = [input_size,*hidden_sizes]
+		encoder_layers = [LadderEncoder(input_size=layer_sizes[i-1],hidden_size=layer_sizes[i],latent_size=latent_sizes[i-1]) for i in range(1,len(layer_sizes))]
+		self.encoder = nn.ModuleList(encoder_layers)
+		decoder_layers = [LadderDecoder(input_size=latent_sizes[i],hidden_size=hidden_sizes[i-1],latent_size=latent_sizes[i-1]) for i in range(1,len(hidden_sizes))][::-1]
+		self.decoder = nn.ModuleList(decoder_layers)
+		self.z2h = nn.Sequential(
+			nn.Linear(latent_sizes[0],recon_hidden_size),
+			nn.ELU()
+			)
+		self.reconstruction = AdvancedRNNDecoder(input_size=input_size,rnn_size=recon_hidden_size,output_size=output_size,use_softmax=use_softmax)
+
+	def forward(self,x):
+		num_steps = x.size()[0]
+		latents = []
+		for encoder in self.encoder:
+			x,z,qz = encoder(x)
+			latents.append(qz)
+		latents = list(reversed(latents))
+		self.kl = 0
+		for i,decoder in enumerate([-1,*self.decoder]):
+			qz = latents[i]
+			if i == 0:
+				self.kl += kl_div(z,qz)
+			else:
+				z,kl_terms = decoder(z,qz)
+				self.kl += kl_div(*kl_terms)
+		z = self.z2h(z)
+		dec,aux_x = self.reconstruction(z,num_steps)
+		return dec,None,aux_x
+
+	def sample(self,z):
+		num_steps = z.size()[0]
+		for decoder in self.decoder:
+			z = decoder(z)
+		z = self.z2h(z)
+		dec,_ = self.reconstruction(z,num_steps)
+		return dec
+
+class LadderCNNVAE(nn.Module):
+	def __init__(self,input_size,hidden_sizes,latent_sizes,recon_hidden_size,output_size,use_softmax=False):
+		super().__init__()
+		self.aux_loss = False
+		self.kl_loss = True
+		layer_sizes = [input_size,*hidden_sizes]
+		encoder_layers = [LadderCNNEncoder(input_size=layer_sizes[i-1],hidden_size=layer_sizes[i],latent_size=latent_sizes[i-1]) for i in range(1,len(layer_sizes))]
+		self.encoder = nn.ModuleList(encoder_layers)
+		decoder_layers = [LadderCNNDecoder(input_size=latent_sizes[i],hidden_size=hidden_sizes[i-1],latent_size=latent_sizes[i-1]) for i in range(1,len(hidden_sizes))][::-1]
+		self.decoder = nn.ModuleList(decoder_layers)
+		self.z2h = nn.Sequential(
+			nn.ConvTranspose1d(in_channels=latent_sizes[0],out_channels=recon_hidden_size,kernel_size=3),
+			nn.ELU()
+			)
+		self.reconstruction = AdvancedRNNDecoder(input_size=input_size,rnn_size=recon_hidden_size,output_size=output_size,use_softmax=use_softmax)
+
+	def forward(self,x):
+		num_steps = x.size()[0]
+		latents = []
+		for encoder in self.encoder:
+			x,z,qz = encoder(x)
+			latents.append(qz)
+		latents = list(reversed(latents))
+		self.kl = 0
+		for i,decoder in enumerate([-1,*self.decoder]):
+			qz = latents[i]
+			if i == 0:
+				self.kl += kl_div(z,qz)
+			else:
+				z,kl_terms = decoder(z,qz)
+				self.kl += kl_div(*kl_terms)
+		z = self.z2h(z.transpose(0,1).transpose(1,2)).transpose(2,1).transpose(1,0)
+		dec = self.reconstruction(z,num_steps)
+		return dec,None
+
+	def sample(self,z):
+		for decoder in self.decoder:
+			z = decoder(z)
+		z = self.z2h(z)
+		dec = self.reconstruction(z,z.size()[0])
 		return dec

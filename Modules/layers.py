@@ -2,6 +2,9 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 
+from sampleLayers import NormalDistributed,AdvancedNormalDistributed,GaussianMerge
+
+
 ###########################
 ####    RNN MODULES    ####
 ###########################
@@ -15,13 +18,13 @@ class RNNEncoder(nn.Module):
 		self.gru = nn.GRU(input_size,rnn_size,num_layers=1)
 		
 	def forward(self,x):
-		h = self.initHidden()
+		h = self.initHidden(x.shape[1])
 		_,h = self.gru(x,h)
 		h = h.view(-1,self.rnn_size)
 		return h
 
-	def initHidden(self):
-		result = Variable(torch.zeros(1,1,self.rnn_size))
+	def initHidden(self,batch_size):
+		result = Variable(torch.zeros(1,batch_size,self.rnn_size))
 		return result
 
 class AdvancedRNNEncoder(nn.Module):
@@ -37,12 +40,12 @@ class AdvancedRNNEncoder(nn.Module):
 			self.directions = 1
 		
 	def forward(self,x):
-		h = self.initHidden()
+		h = self.initHidden(x.shape[1])
 		o,_ = self.gru(x,h)
 		return o
 
-	def initHidden(self):
-		result = Variable(torch.zeros(self.directions,1,self.rnn_size))
+	def initHidden(self,batch_size):
+		result = Variable(torch.zeros(self.directions,batch_size,self.rnn_size))
 		return result
 
 class RNNDecoder(nn.Module):
@@ -136,6 +139,20 @@ class CNNEncoder(nn.Module):
 			nn.ELU(),
 			nn.Conv1d(in_channels=conv_size,out_channels=conv_size,kernel_size=5),
 			nn.ELU(),
+			nn.Conv1d(in_channels=conv_size,out_channels=conv_size,kernel_size=5),
+			nn.ELU(),
+			nn.Conv1d(in_channels=conv_size,out_channels=conv_size,kernel_size=3),
+			nn.ELU(),
+			nn.Conv1d(in_channels=conv_size,out_channels=conv_size,kernel_size=3),
+			nn.ELU(),
+			nn.Conv1d(in_channels=conv_size,out_channels=conv_size,kernel_size=3),
+			nn.ELU(),
+			nn.Conv1d(in_channels=conv_size,out_channels=conv_size,kernel_size=3),
+			nn.ELU(),
+			nn.Conv1d(in_channels=conv_size,out_channels=conv_size,kernel_size=3),
+			nn.ELU(),
+			nn.Conv1d(in_channels=conv_size,out_channels=conv_size,kernel_size=3),
+			nn.ELU(),
 			nn.Conv1d(in_channels=conv_size,out_channels=conv_size,kernel_size=3),
 			nn.ELU(),
 			nn.Conv1d(in_channels=conv_size,out_channels=conv_size,kernel_size=3),
@@ -179,6 +196,10 @@ class CNNDecoder(nn.Module):
 		# layer definitions
 		self.convLayers = nn.Sequential(
 			nn.ConvTranspose1d(in_channels=conv_size,out_channels=conv_size,kernel_size=2),
+			nn.ELU(),
+			nn.ConvTranspose1d(in_channels=conv_size,out_channels=conv_size,kernel_size=3),
+			nn.ELU(),
+			nn.ConvTranspose1d(in_channels=conv_size,out_channels=conv_size,kernel_size=3),
 			nn.ELU(),
 			nn.ConvTranspose1d(in_channels=conv_size,out_channels=conv_size,kernel_size=3),
 			nn.ELU(),
@@ -246,6 +267,20 @@ class HybridDecoder(nn.Module):
 			nn.ConvTranspose1d(in_channels=conv_size,out_channels=conv_size,kernel_size=3),
 			nn.ELU(),
 			nn.ConvTranspose1d(in_channels=conv_size,out_channels=conv_size,kernel_size=3),
+			nn.ELU(),
+			nn.ConvTranspose1d(in_channels=conv_size,out_channels=conv_size,kernel_size=3),
+			nn.ELU(),
+			nn.ConvTranspose1d(in_channels=conv_size,out_channels=conv_size,kernel_size=3),
+			nn.ELU(),
+			nn.ConvTranspose1d(in_channels=conv_size,out_channels=conv_size,kernel_size=3),
+			nn.ELU(),
+			nn.ConvTranspose1d(in_channels=conv_size,out_channels=conv_size,kernel_size=3),
+			nn.ELU(),
+			nn.ConvTranspose1d(in_channels=conv_size,out_channels=conv_size,kernel_size=3),
+			nn.ELU(),
+			nn.ConvTranspose1d(in_channels=conv_size,out_channels=conv_size,kernel_size=3),
+			nn.ELU(),
+			nn.ConvTranspose1d(in_channels=conv_size,out_channels=conv_size,kernel_size=5),
 			nn.ELU(),
 			nn.ConvTranspose1d(in_channels=conv_size,out_channels=conv_size,kernel_size=5),
 			nn.ELU(),
@@ -334,3 +369,113 @@ class AdvancedHybridDecoder(nn.Module):
 		# prepare the output to correct shape
 		output = torch.stack(predictions)
 		return output,dec
+
+###########################
+####   Ladder MODULES  ####
+###########################
+
+class LadderEncoder(nn.Module):
+	def __init__(self,input_size,hidden_size,latent_size):
+		super().__init__()
+		self.samplelayer = NormalDistributed(latent_size=latent_size)
+		self.linear = nn.Linear(input_size,hidden_size)
+		self.batch_norm = nn.BatchNorm1d(hidden_size,momentum=0.1)
+		self.h2z = nn.Linear(hidden_size,self.samplelayer.inputShape()[-1])
+		self.elu = nn.ELU()
+
+	def forward(self,x):
+		x = self.linear(x)
+		x = self.batch_norm(x.transpose(1,2)).transpose(1,2)
+		x = self.elu(x)
+		z_in = self.h2z(x)
+		z,qz = self.samplelayer(z_in)
+		return x,z,qz
+
+class LadderDecoder(nn.Module):
+	def __init__(self,input_size,hidden_size,latent_size):
+		super().__init__()
+		self.samplelayer1 = GaussianMerge(latent_size=latent_size)
+		self.linear1 = nn.Linear(input_size,hidden_size)
+		self.batch_norm1 = nn.BatchNorm1d(hidden_size,momentum=0.1)
+		self.h2z1 = nn.Linear(hidden_size,self.samplelayer1.inputShape()[-1])
+
+		self.samplelayer2 = NormalDistributed(latent_size=latent_size)
+		self.linear2 = nn.Linear(input_size,hidden_size)
+		self.batch_norm2 = nn.BatchNorm1d(hidden_size,momentum=0.1)
+		self.h2z2 = nn.Linear(hidden_size,self.samplelayer2.inputShape()[-1])
+
+		self.elu = nn.ELU()
+		
+	def forward(self,x,l_qz=None):
+		if l_qz:
+			# sample from encoder layer and then merge
+			z = self.linear1(x)
+			z = self.batch_norm1(z.transpose(1,2)).transpose(1,2)
+			z = self.elu(z)
+			z = self.h2z1(z)
+			z1,qz1 = self.samplelayer1(z,l_qz.mu,l_qz.logvar)
+		# sample from decoder
+		z = self.linear2(x)
+		z = self.batch_norm2(z.transpose(1,2)).transpose(1,2)
+		z = self.elu(z)
+		z = self.h2z2(z)
+		z2,qz2 = self.samplelayer2(z)
+
+		if l_qz is None:
+			return z2
+		else:
+			return z2,(z1,qz1,qz2)
+
+class LadderCNNEncoder(nn.Module):
+	def __init__(self,input_size,hidden_size,latent_size):
+		super().__init__()
+		self.samplelayer = NormalDistributed(latent_size=latent_size)
+		self.conv = nn.Conv1d(in_channels=input_size,out_channels=hidden_size,kernel_size=3)
+		self.batch_norm = nn.BatchNorm1d(hidden_size,momentum=0.1)
+		self.h2z = nn.Linear(hidden_size,self.samplelayer.inputShape()[-1])
+		self.elu = nn.ELU()
+
+	def forward(self,x):
+		x = x.transpose(0,1).transpose(1,2)
+		x = self.conv(x).transpose(2,1).transpose(1,0)
+		x = self.batch_norm(x.transpose(1,2)).transpose(1,2)
+		x = self.elu(x)
+		z_in = self.h2z(x)
+		z,qz = self.samplelayer(z_in)
+		return x,z,qz
+
+class LadderCNNDecoder(nn.Module):
+	def __init__(self,input_size,hidden_size,latent_size):
+		super().__init__()
+		self.samplelayer1 = GaussianMerge(latent_size=latent_size)
+		self.conv1 = nn.ConvTranspose1d(in_channels=input_size,out_channels=hidden_size,kernel_size=3)
+		self.batch_norm1 = nn.BatchNorm1d(hidden_size,momentum=0.1)
+		self.h2z1 = nn.Linear(hidden_size,self.samplelayer1.inputShape()[-1])
+
+		self.samplelayer2 = NormalDistributed(latent_size=latent_size)
+		self.conv2 = nn.ConvTranspose1d(in_channels=input_size,out_channels=hidden_size,kernel_size=3)
+		self.batch_norm2 = nn.BatchNorm1d(hidden_size,momentum=0.1)
+		self.h2z2 = nn.Linear(hidden_size,self.samplelayer2.inputShape()[-1])
+
+		self.elu = nn.ELU()
+		
+	def forward(self,x,l_qz=None):
+		x_t = x.transpose(0,1).transpose(1,2)
+		if l_qz:
+			# sample from encoder layer and then merge
+			z = self.conv1(x_t).transpose(2,1).transpose(1,0)
+			z = self.batch_norm1(z.transpose(1,2)).transpose(1,2)
+			z = self.elu(z)
+			z = self.h2z1(z)
+			z1,qz1 = self.samplelayer1(z,l_qz.mu,l_qz.logvar)
+		# sample from decoder
+		z = self.conv2(x_t).transpose(2,1).transpose(1,0)
+		z = self.batch_norm2(z.transpose(1,2)).transpose(1,2)
+		z = self.elu(z)
+		z = self.h2z2(z)
+		z2,qz2 = self.samplelayer2(z)
+
+		if l_qz is None:
+			return z2
+		else:
+			return z2,(z1,qz1,qz2)
