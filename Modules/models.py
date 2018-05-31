@@ -4,6 +4,7 @@ from torch.autograd import Variable
 
 from layers import RNNEncoder,AdvancedRNNEncoder,RNNDecoder,AdvancedRNNDecoder,CNNEncoder,AdvancedCNNEncoder,CNNDecoder,AdvancedCNNDecoder
 from layers import HybridDecoder,AdvancedHybridDecoder,LadderEncoder,LadderDecoder,LadderCNNEncoder,LadderCNNDecoder
+from layers import CNNEncoderSmall,CNNDecoderSmall,HybridDecoderSmall
 from sampleLayers import NormalDistributed,AdvancedNormalDistributed
 from helpers import kl_div
 
@@ -147,6 +148,39 @@ class AdvancedRNNVAE(nn.Module):
 		dec = self.decoder(dec,num_steps)
 		return dec
 
+class CNNVAESmall(nn.Module):
+	def __init__(self,input_size,conv_size,latent_size,output_size,use_softmax=False):
+		super().__init__()
+		"""
+		Layer definitions
+		"""
+		self.aux_loss = False
+		self.kl_loss = False
+		# sample layer with normal distribution
+		self.samplelayer = NormalDistributed(latent_size=latent_size)
+		# encode from input space to hidden space
+		self.encoder = CNNEncoderSmall(input_size=input_size,conv_size=conv_size)
+		# encoded to latent layer
+		self.h2z = nn.Sequential(
+			nn.Linear(conv_size,self.samplelayer.inputShape()[-1]),
+			nn.ELU()
+			)
+		# latent to decoded layer
+		self.z2h = nn.Sequential(
+			nn.Linear(self.samplelayer.outputShape()[-1],conv_size),
+			nn.ELU()
+			)
+		# decode from hidden space to input space
+		self.decoder = CNNDecoderSmall(input_size=input_size,conv_size=conv_size,output_size=output_size,use_softmax=use_softmax)
+
+	def forward(self,x):
+		enc = self.encoder(x)
+		enc = self.h2z(enc)
+		z,qz = self.samplelayer(enc)
+		dec = self.z2h(z)
+		dec = self.decoder(dec)
+		return dec,qz
+
 class CNNVAE(nn.Module):
 	def __init__(self,input_size,conv_size,latent_size,output_size,use_softmax=False):
 		super().__init__()
@@ -228,6 +262,40 @@ class AdvancedCNNVAE(nn.Module):
 		dec = self.z2h(z)
 		dec = self.decoder(dec)
 		return dec
+
+class HybridVAESmall(nn.Module):
+	def __init__(self,input_size,conv_size,rnn_size,latent_size,output_size,use_softmax=False):
+		super().__init__()
+		"""
+		Layer definitions
+		"""
+		self.aux_loss = True
+		self.kl_loss = False
+		# sample layer with normal distribution
+		self.samplelayer = NormalDistributed(latent_size=latent_size)
+		# encode from input space to hidden space
+		self.encoder = CNNEncoderSmall(input_size=input_size,conv_size=conv_size)
+		# encoded to latent layer
+		self.h2z = nn.Sequential(
+			nn.Linear(conv_size,self.samplelayer.inputShape()[-1]),
+			nn.ELU()
+			)
+		# latent to decoded layer
+		self.z2h = nn.Sequential(
+			nn.Linear(self.samplelayer.outputShape()[-1],conv_size),
+			nn.ELU()
+			)
+		# decode from hidden space to input space
+		self.decoder = HybridDecoderSmall(input_size=input_size,conv_size=conv_size,rnn_size=rnn_size,output_size=output_size,use_softmax=use_softmax)
+
+	def forward(self,x):
+		num_steps = x.size()[0]
+		enc = self.encoder(x)
+		enc = self.h2z(enc)
+		z,qz = self.samplelayer(enc)
+		dec = self.z2h(z)
+		dec,aux_x = self.decoder(dec,num_steps)
+		return dec,qz,aux_x
 
 class HybridVAE(nn.Module):
 	def __init__(self,input_size,conv_size,rnn_size,latent_size,output_size,use_softmax=False):
@@ -318,6 +386,7 @@ class LadderVAE(nn.Module):
 		super().__init__()
 		self.aux_loss = False
 		self.kl_loss = True
+		self.sample_size = latent_sizes[-1]
 		layer_sizes = [input_size,*hidden_sizes]
 		encoder_layers = [LadderEncoder(input_size=layer_sizes[i-1],hidden_size=layer_sizes[i],latent_size=latent_sizes[i-1]) for i in range(1,len(layer_sizes))]
 		self.encoder = nn.ModuleList(encoder_layers)
@@ -345,15 +414,15 @@ class LadderVAE(nn.Module):
 				z,kl_terms = decoder(z,qz)
 				self.kl += kl_div(*kl_terms)
 		z = self.z2h(z)
-		dec,aux_x = self.reconstruction(z,num_steps)
-		return dec,None,aux_x
+		dec = self.reconstruction(z,num_steps)
+		return dec,None
 
 	def sample(self,z):
 		num_steps = z.size()[0]
 		for decoder in self.decoder:
 			z = decoder(z)
 		z = self.z2h(z)
-		dec,_ = self.reconstruction(z,num_steps)
+		dec = self.reconstruction(z,num_steps)
 		return dec
 
 class LadderCNNVAE(nn.Module):
@@ -361,6 +430,7 @@ class LadderCNNVAE(nn.Module):
 		super().__init__()
 		self.aux_loss = False
 		self.kl_loss = True
+		self.sample_size = latent_sizes[-1]
 		layer_sizes = [input_size,*hidden_sizes]
 		encoder_layers = [LadderCNNEncoder(input_size=layer_sizes[i-1],hidden_size=layer_sizes[i],latent_size=latent_sizes[i-1]) for i in range(1,len(layer_sizes))]
 		self.encoder = nn.ModuleList(encoder_layers)
@@ -392,8 +462,9 @@ class LadderCNNVAE(nn.Module):
 		return dec,None
 
 	def sample(self,z):
+		num_steps = z.size()[0]
 		for decoder in self.decoder:
 			z = decoder(z)
-		z = self.z2h(z)
-		dec = self.reconstruction(z,z.size()[0])
+		z = self.z2h(z.transpose(0,1).transpose(1,2)).transpose(2,1).transpose(1,0)
+		dec = self.reconstruction(z,num_steps)
 		return dec

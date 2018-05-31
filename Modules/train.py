@@ -26,7 +26,6 @@ def train(data_loader,valid_data_loader,model,optimizer,scheduler,loss_fn,kl_los
 		print_aux_loss = 0
 		divisor = 0
 		for batch_idx,batch in enumerate(data_loader):
-			print(batch_idx,batch)
 			if (max_batches and divisor >= max_batches):
 				break
 			divisor += 1
